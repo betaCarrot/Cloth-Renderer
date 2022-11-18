@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>My first three.js app</title>
+  <style>
+    body {
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+
+  <script type="x-shader/x-vertex" id="vertexShader">
+    out vec3 vout_position;
+    out vec3 vout_normal;
+    
+    void main() {
+      vout_position = position;
+      vout_normal = normal;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  </script>
+  <script type="x-shader/x-fragment" id="fragmentShader">
+    in vec3 vout_position;
+    in vec3 vout_normal;
+    
+    uniform int type;
+    int N0, N1;
+    float ng0, ng1, kd0, kd1, ys0, ys1, yv0, yv1, a0, a1, ts0[10], ts1[10];
+    vec3 A0, A1;
+    
+    const float PI = 3.14159265358979323846;
+    
+    mat4 rotationMatrix(vec3 ax, float angle) {
+      vec3 axis = normalize(ax);
+      float s = -sin(angle);
+      float c = cos(angle);
+      float oc = 1.0 - c;
+    
+      return mat4(
+          oc * axis.x * axis.x + c, oc * axis.x * axis.y - axis.z * s,
+          oc * axis.z * axis.x + axis.y * s, 0.0, oc * axis.x * axis.y + axis.z * s,
+          oc * axis.y * axis.y + c, oc * axis.y * axis.z - axis.x * s, 0.0,
+          oc * axis.z * axis.x - axis.y * s, oc * axis.y * axis.z + axis.x * s,
+          oc * axis.z * axis.z + c, 0.0, 0.0, 0.0, 0.0, 1.0);
+    }
+    
+    vec3 rotate(vec3 vec, vec3 axis, float angle) {
+      return (rotationMatrix(axis, angle) * vec4(vec, 1.0)).xyz;
+    }
+    
+    float cdot(vec3 a, vec3 b) { return clamp(dot(a, b), -1.0, 1.0); }
+    
+    float gaussian(float x, float t) { return exp(-0.5 * x * x / (t * t)); }
+    
+    vec3 brdf(vec3 n, vec3 t, vec3 b, vec3 wr, vec3 wi) {
+    
+      float Q0 = 0.0;
+      float Q1 = 0.0;
+      vec3 L0 = vec3(0.0);
+      vec3 L1 = vec3(0.0);
+    
+      for (int i = 0; i < N0; i++) {
+        vec3 tt = rotate(t, b, radians(ts0[i]));
+        vec3 nn = rotate(n, b, radians(ts0[i]));
+        float ti = asin(cdot(wi, tt));
+        float tr = asin(cdot(wr, tt));
+        float pi = acos(cdot(n, normalize(wi - t * sin(ti))));
+        float pr = acos(dot(n, normalize(wr - t * sin(tr))));
+        float si = acos(cdot(n, normalize(wi - b * dot(wi, b))));
+        float sr = acos(cdot(n, normalize(wr - b * dot(wr, b))));
+    
+        float th = (ti + tr) * 0.5;
+        float td = (ti - tr) * 0.5;
+        float pd =
+            acos(cdot(normalize(wi - t * sin(ti)), normalize(wr - t * sin(tr))));
+        float sd = acos(
+            cdot(normalize(wi - b * dot(wi, b)), normalize(wr - b * dot(wr, b))));
+    
+        float c = cos(td) * cos(0.5 * pd);
+        float g = sqrt(ng0 * ng0 - 1.0 + c * c);
+        float Fr = 0.5 * (g - c) * (g - c) *
+                   (1.0 + (c * (g + c) - 1.0) * (c * (g + c) - 1.0) /
+                              (c * (g - c) + 1.0) / (c * (g - c) + 1.0)) /
+                   (g + c) / (g + c);
+        float F = (1.0 - Fr) * (1.0 - Fr);
+        float frs = Fr * cos(pd * 0.5) * gaussian(th, ys0) / ys0 / sqrt(2.0 * PI);
+        vec3 frv = F *
+                   ((1.0 - kd0) * gaussian(th, yv0) / yv0 / sqrt(2.0 * PI) + kd0) /
+                   (cos(ti) + cos(tr)) * A0;
+        vec3 fs = (frs + frv) / cos(td) / cos(td);
+    
+        L0 += mix(max(cos(pi) * cos(pr), 0.0), max(0.0, min(cos(pi), cos(pr))),
+                  gaussian(pd, radians(20.0))) *
+              mix(max(cos(si) * cos(sr), 0.0), max(0.0, min(cos(si), cos(sr))),
+                  gaussian(sd, radians(20.0))) *
+              fs * cos(ti);
+        Q0 += a0 * mix(max(cos(si) * cos(sr), 0.0), max(0.0, min(cos(si), cos(sr))),
+                       gaussian(sd, radians(20.0)));
+      }
+      L0 /= float(N0);
+      Q0 /= float(N0);
+    
+      for (int i = 0; i < N1; i++) {
+        vec3 bb = rotate(b, t, radians(ts1[i]));
+        vec3 nn = rotate(n, t, radians(ts1[i]));
+        float ti = asin(cdot(wi, bb));
+        float tr = asin(cdot(wr, bb));
+        float pi = acos(cdot(n, normalize(wi - t * sin(ti))));
+        float pr = acos(dot(n, normalize(wr - t * sin(tr))));
+        float si = acos(cdot(n, normalize(wi - b * dot(wi, b))));
+        float sr = acos(cdot(n, normalize(wr - b * dot(wr, b))));
+    
+        float th = (ti + tr) * 0.5;
+        float td = (ti - tr) * 0.5;
+        float pd =
+            acos(cdot(normalize(wi - t * sin(ti)), normalize(wr - t * sin(tr))));
+        float sd = acos(
+            cdot(normalize(wi - b * dot(wi, b)), normalize(wr - b * dot(wr, b))));
+    
+        float c = cos(td) * cos(0.5 * pd);
+        float g = sqrt(ng1 * ng1 - 1.0 + c * c);
+        float Fr = 0.5 * (g - c) * (g - c) *
+                   (1.0 + (c * (g + c) - 1.0) * (c * (g + c) - 1.0) /
+                              (c * (g - c) + 1.0) / (c * (g - c) + 1.0)) /
+                   (g + c) / (g + c);
+        float F = (1.0 - Fr) * (1.0 - Fr);
+        float frs = Fr * cos(pd * 0.5) * gaussian(th, ys1) / ys1 / sqrt(2.0 * PI);
+        vec3 frv = F *
+                   ((1.0 - kd1) * gaussian(th, yv1) / yv1 / sqrt(2.0 * PI) + kd1) /
+                   (cos(ti) + cos(tr)) * A1;
+        vec3 fs = (vec3(frs) + frv) / cos(td) / cos(td);
+    
+        L1 += mix(max(cos(pi) * cos(pr), 0.0), max(0.0, min(cos(pi), cos(pr))),
+                  gaussian(pd, radians(20.0))) *
+              mix(max(cos(si) * cos(sr), 0.0), max(0.0, min(cos(si), cos(sr))),
+                  gaussian(sd, radians(20.0))) *
+              fs * cos(ti);
+        Q1 += a1 * mix(max(cos(si) * cos(sr), 0.0), max(0.0, min(cos(si), cos(sr))),
+                       gaussian(sd, radians(20.0)));
+      }
+      L1 /= float(N1);
+      Q1 /= float(N1);
+    
+      vec3 res = L0 * a0 + L1 * a1;
+    
+      float Q = Q0 + Q1 + (1.0 - a0 - a1) * dot(wi, n);
+    
+      if (Q > 0.0) {
+        res /= Q;
+      }
+      return res;
+    }
+    
+    void init() {
+      if (type == 0) {
+        ng0 = 1.46;
+        A0 = vec3(0.2, 0.8, 1.0) * 0.3;
+        kd0 = 0.3;
+        ys0 = radians(12.0);
+        yv0 = radians(24.0);
+        a0 = 0.33;
+        N0 = 2;
+        ts0[0] = -25.0;
+        ts0[1] = 25.0;
+    
+        ng1 = 1.46;
+        A1 = vec3(0.2, 0.8, 1.0) * 0.3;
+        kd1 = 0.3;
+        ys1 = radians(12.0);
+        yv1 = radians(24.0);
+        a1 = 0.33;
+        N1 = 1;
+        ts1[0] = 0.0;
+      }
+    
+      if (type == 1) {
+        ng0 = 1.345;
+        A0 = vec3(1.0, 0.95, 0.05) * 0.12;
+        kd0 = 0.2;
+        ys0 = radians(5.0);
+        yv0 = radians(10.0);
+        a0 = 0.75;
+        N0 = 4;
+        ts0[0] = -35.0;
+        ts0[1] = -35.0;
+        ts0[2] = 35.0;
+        ts0[3] = 35.0;
+    
+        ng1 = 1.345;
+        A1 = vec3(1.0, 0.95, 0.05) * 0.16;
+        kd1 = 0.3;
+        ys1 = radians(18.0);
+        yv1 = radians(32.0);
+        a1 = 0.25;
+        N1 = 1;
+        ts1[0] = 0.0;
+      }
+    
+      if (type == 2) {
+        ng0 = 1.539;
+        A0 = vec3(1.0, 0.37, 0.3) * 0.035;
+        kd0 = 0.1;
+        ys0 = radians(2.5);
+        yv0 = radians(5.0);
+        a0 = 0.9;
+        N0 = 8;
+        ts0[0] = -32.0;
+        ts0[1] = -32.0;
+        ts0[2] = -18.0;
+        ts0[3] = 0.0;
+        ts0[4] = 0.0;
+        ts0[5] = 18.0;
+        ts0[6] = 32.0;
+        ts0[7] = 32.0;
+    
+        ng1 = 1.539;
+        A1 = vec3(1.0, 0.37, 0.3) * 0.2;
+        kd1 = 0.7;
+        ys1 = radians(30.0);
+        yv1 = radians(60.0);
+        a1 = 0.1;
+        N1 = 1;
+        ts1[0] = 0.0;
+      }
+    
+      if (type == 3) {
+        ng0 = 1.539;
+        A0 = vec3(1.0, 0.37, 0.3) * 0.035;
+        kd0 = 0.1;
+        ys0 = radians(2.5);
+        yv0 = radians(5.0);
+        a0 = 0.67;
+        N0 = 8;
+        ts0[0] = -30.0;
+        ts0[1] = -30.0;
+        ts0[2] = 30.0;
+        ts0[3] = 30.0;
+        ts0[4] = -5.0;
+        ts0[5] = -5.0;
+        ts0[6] = 5.0;
+        ts0[7] = 5.0;
+    
+        ng1 = 1.539;
+        A1 = vec3(1.0, 0.37, 0.3) * 0.2;
+        kd1 = 0.7;
+        ys1 = radians(30.0);
+        yv1 = radians(60.0);
+        a1 = 0.33;
+        N1 = 1;
+        ts1[0] = 0.0;
+      }
+    
+      if (type == 4) {
+        ng0 = 1.345;
+        A0 = vec3(0.1, 1.0, 0.4) * 0.2;
+        kd0 = 0.1;
+        ys0 = radians(4.0);
+        yv0 = radians(8.0);
+        a0 = 0.86;
+        N0 = 4;
+        ts0[0] = -25.0;
+        ts0[1] = -25.0;
+        ts0[2] = 25.0;
+        ts0[3] = 25.0;
+    
+        ng1 = 1.345;
+        A1 = vec3(1.0, 0.0, 0.1) * 0.6;
+        kd1 = 0.1;
+        ys1 = radians(5.0);
+        yv1 = radians(10.0);
+        a1 = 0.14;
+        N1 = 1;
+        ts1[0] = 0.0;
+      }
+    
+      if (type == 5) {
+        ng0 = 1.46;
+        A0 = vec3(0.05, 0.02, 0.0) * 0.3;
+        kd0 = 0.1;
+        ys0 = radians(6.0);
+        yv0 = radians(12.0);
+        a0 = 0.5;
+        N0 = 2;
+        ts0[0] = -90.0;
+        ts0[1] = -50.0;
+    
+        ng1 = 1.46;
+        A1 = vec3(0.05, 0.02, 0.0) * 0.3;
+        kd1 = 0.1;
+        ys1 = radians(6.0);
+        yv1 = radians(12.0);
+        a1 = 0.5;
+        N1 = 4;
+        ts1[0] = -90.0;
+        ts1[1] = -55.0;
+        ts1[2] = 55.0;
+        ts1[3] = 90.0;
+      }
+    }
+    
+    void main() {
+      init();
+    
+      vec3 radiance = 2.0 * vec3(10.0, 10.0, 10.0);
+    
+      vec3 L = normalize(cameraPosition - vout_position);
+      vec3 V = normalize(cameraPosition - vout_position);
+      vec3 N = vout_normal;
+      vec3 normal = N;
+      vec3 vout_color = vec3(0.0);
+      vec3 tangent;
+      if (abs(normal.y) > 1e-7)
+        tangent = normalize(vec3(0.0, normal.z, -normal.y));
+      else
+        tangent = normalize(vec3(-normal.z, 0.0, normal.x));
+      vec3 bitangent = cross(normal, tangent);
+      vec3 brdf = brdf(normal, tangent, bitangent, V, L);
+      float NdotL = max(dot(N, L), 0.0);
+      gl_FragColor = vec4(brdf * NdotL * radiance, 1.0);
+    }
+    </script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.138.0/build/three.module.js",
+      "ObjLoader": "https://unpkg.com/three@0.138.0/examples/jsm/loaders/OBJLoader.js",
+      "gui": "https://unpkg.com/three@0.138.0/examples/jsm/libs/lil-gui.module.min.js",
+      "OrbitControls": "https://unpkg.com/three@0.138.0/examples/jsm/controls/OrbitControls.js",
+      "BufferGeometryUtils": "https://unpkg.com/three@0.138.0/examples/jsm/utils/BufferGeometryUtils.js"
+    }
+  }
+</script>
+  <script type="module" src="./src.js"></script>
+</body>
+
+</html>
